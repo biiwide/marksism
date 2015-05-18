@@ -8,7 +8,7 @@
              AnchorLinkNode AutoLinkNode BlockQuoteNode CodeNode  DefinitionNode
              DefinitionListNode DefinitionTermNode
              ExpImageNode ExpLinkNode HeaderNode HtmlBlockNode InlineHtmlNode
-             MailLinkNode OrderedListNode ParaNode QuotedNode QuotedNode$Type
+             MailLinkNode Node OrderedListNode ParaNode QuotedNode QuotedNode$Type
              SimpleNode SimpleNode$Type SpecialTextNode StrikeNode StrongEmphSuperNode
              TableNode TableBodyNode TableCaptionNode TableCellNode
              TableColumnNode TableColumnNode$Alignment TableHeaderNode TableRowNode
@@ -75,20 +75,31 @@ a String, or a list of child nodes."
   "Node Constructor that only returns the content"
   [_ _ content] content)
 
-(letfn [(not-super [n]
-          (if (#{SuperNode RootNode} (class n))
-            (mapcat not-super (.getChildren n))
-            (list n)))]
-  (defn flatten-children [node-coll]
-    (not-empty (mapcat not-super node-coll))))
+(letfn [(lift [n]
+          (let [n-class (class n)]
+            (cond (#{SuperNode RootNode} (class n))
+                  (mapcat lift (.getChildren ^SuperNode n))
 
-(defn md-super->nodes [^SuperNode super cons-node state]
-  (map (curry->node cons-node state)
-    (flatten-children (.getChildren super))))
+                  (#{TextNode SpecialTextNode} (class n))
+                  (list (.getText ^TextNode n))
 
-(defn- index-by [f coll]
-  (reduce (fn [m v] (assoc m (f v) v))
-    nil coll))
+                  :else (list n))))]
+  (defn lift-children [n]
+    (combine-adjacent string? str
+      (mapcat lift (.getChildren n)))))
+
+(defn f-apply [f]
+  (fn [node]
+    (if (instance? Node node)
+      (f node)
+      node)))
+
+(defn coll->node [node-coll cons-node state]
+  (map (f-apply (curry->node cons-node state))
+    node-coll))
+
+(defn construct-children [n cons-node state]
+  (coll->node (lift-children n) cons-node state))
 
 (extend-protocol MarkdownNode RootNode
   (->node [^RootNode root cons-node state]
@@ -103,7 +114,7 @@ a String, or a list of child nodes."
           (assoc :references refs)
           abbrs
           (assoc :abbreviations abbrs))
-        (md-super->nodes root cons-node
+        (construct-children root cons-node
           (cond-> state
             refs (update-in [:references] merge refs)
             abbrs (update-in [:abbreviations] merge abbrs)))))))
@@ -114,7 +125,7 @@ a String, or a list of child nodes."
   (fn [md cons-node state]
     (cons-node label
       (->attrs md cons-node state)
-      (md-super->nodes md cons-node state))))
+      (construct-children md cons-node state))))
 
 (defn super-node
   "Generic PegDown SuperNode parser."
@@ -142,7 +153,7 @@ a String, or a list of child nodes."
   (->node [^ExpImageNode i cons-node state]
     (let [title (.title i)
           url (.url i)
-          alt (first (md-super->nodes i just-content state))]
+          alt (first (construct-children i just-content state))]
       (cons-node :image
         (cond-> {:url (.url i)}
           (not (str/blank? alt))
@@ -157,14 +168,14 @@ a String, or a list of child nodes."
         (not (str/blank? title))
         (assoc :title title)))))
 
-(super-node HeaderNode :header
+(super-node HeaderNode :heading
   (fn [^HeaderNode h _ _]
     {:level (.getLevel h)}))
 
 (extend-protocol MarkdownNode
   RefLinkNode
   (->node [r cons-node state]
-    (let [children (md-super->nodes r cons-node state)
+    (let [children (construct-children r cons-node state)
           [[_ _ ref-key]] children
           ref (-> state :references (get ref-key))]
       (cons-node :link
@@ -173,14 +184,14 @@ a String, or a list of child nodes."
 
   ReferenceNode
   (->node [r cons-node state]
-    (let [[id] (md-super->nodes r just-content state)
+    (let [[id] (construct-children r just-content state)
           title (.getTitle r)]
       (cons-node :link-reference
         (cond-> {:url (.getUrl r)
                  :id id}
           (not (empty? title))
           (assoc :title title))
-        (md-super->nodes r cons-node state)))))
+        (construct-children r cons-node state)))))
 
 (super-node QuotedNode :quote
   (let [attrs {QuotedNode$Type/Single {:type :single
@@ -197,8 +208,8 @@ a String, or a list of child nodes."
 
 (super-node TableNode :table
   (fn [^TableNode t cons-node state]
-    {:columnts (map (curry->node cons-node state)
-                 (.getColumns t))}))
+    {:columns (map (curry->node cons-node state)
+                (.getColumns t))}))
 
 (basic-super-node TableHeaderNode :table-header)
 (basic-super-node TableRowNode :table-row)
@@ -219,15 +230,18 @@ a String, or a list of child nodes."
     (fn [^TableColumnNode c _ _]
       (alignments (.getAlignment c)))))
 
-(defn text-node [class label ->attrs & [xform-text]]
-    (let [xformer (if (fn? xform-text)
-                    xform-text
-                    identity)]
-      (extend class MarkdownNode
-        {:->node (fn [^TextNode txt-node cons-node state]
-                   (cons-node label
-                     (->attrs txt-node cons-node state)
-                     (xformer (.getText txt-node))))})))
+(letfn [(->coll [x]
+          (if (coll? x)
+            x (list x)))]
+  (defn text-node [class label ->attrs & [xform-text]]
+      (let [xformer (if (fn? xform-text)
+                      (comp ->coll xform-text)
+                      list)]
+        (extend class MarkdownNode
+          {:->node (fn [^TextNode txt-node cons-node state]
+                     (cons-node label
+                       (->attrs txt-node cons-node state)
+                       (xformer (.getText txt-node))))}))))
 
 (defn basic-text-node
   [class label & [xform-text]]
@@ -247,17 +261,7 @@ a String, or a list of child nodes."
 
 (text-node AnchorLinkNode :anchor
   (fn [^AnchorLinkNode a _ _]
-    {:name (.getName AnchorLinkNode)})
-  (fn [text]
-    (when-not (empty? text)
-      [:text nil text])))
-
-(text-node AutoLinkNode :link
-  (fn [^AutoLinkNode auto _ _]
-    {:url (.getText auto)})
-  (fn [text]
-    (when-not (empty? text)
-      [:text nil text])))
+    {:name (.getName a)}))
 
 
 (extend StrongEmphSuperNode
