@@ -143,8 +143,8 @@ a String, or a list of child nodes."
 (basic-super-node DefinitionListNode :definition-list)
 (basic-super-node DefinitionNode :definition)
 (basic-super-node DefinitionTermNode :definition-term)
-(basic-super-node OrderedListNode :numbered-list)
 (basic-super-node ListItemNode :list-item)
+(basic-super-node OrderedListNode :numbered-list)
 (basic-super-node ParaNode :paragraph)
 (basic-super-node StrikeNode :strike)
 
@@ -247,12 +247,10 @@ a String, or a list of child nodes."
   [class label & [xform-text]]
   (text-node class label always-nil xform-text))
 
-(basic-text-node TextNode :text (comp first html/html-snippet))
 (basic-text-node CodeNode :code-inline)
 (basic-text-node HtmlBlockNode :html-block)
 (basic-text-node InlineHtmlNode :inline-html)
 (basic-text-node MailLinkNode :mailto)
-(basic-text-node SpecialTextNode :text)
 
 (text-node VerbatimNode :code-block
   (fn [^VerbatimNode v _ _]
