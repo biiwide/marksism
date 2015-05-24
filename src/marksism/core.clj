@@ -1,5 +1,6 @@
 (ns marksism.core
-  (:require [marksism.pegdown :as peg]))
+  (:require [marksism.pegdown :as peg])
+  (:require [marksism.node :as node]))
 
 (defn parse
   "Parses a String of Markdown content.
@@ -44,4 +45,4 @@ by applying different node constructors"
     [type attrs content]
     (fn [cons-node]
       (cons-node type attrs
-        (map (f-apply cons-node) content)))))
+        (map (f-apply cons-node) (node/flatten-nodes content))))))

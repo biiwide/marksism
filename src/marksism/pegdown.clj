@@ -1,7 +1,7 @@
 (ns marksism.pegdown
   (:require [clojure.string :as str]
             [net.cgrand.enlive-html :as html]
-            [marksism.node :refer :all])
+            [marksism.node :as node :refer [->node curry->node MarkdownNode]])
   (:import  [java.io StringReader StringWriter]
             [org.pegdown.ast
              RootNode BulletListNode ListItemNode SuperNode TextNode RefLinkNode
@@ -14,23 +14,7 @@
              TableColumnNode TableColumnNode$Alignment TableHeaderNode TableRowNode
              TextNode
              VerbatimNode ReferenceNode]
-           [org.pegdown PegDownProcessor Extensions]
-           [org.w3c.tidy Tidy]))
-
-(defn tidy
-  "Tidy up HTML with Tidy"
-  [untidy]
-  (let [w (StringWriter.)]
-    (doto (Tidy.)
-      (.setTabsize 4)
-      (.setPrintBodyOnly true)
-      (.setShowWarnings false)
-      (.setQuiet true)
-      (.parse (StringReader. untidy) w))
-    (-> (.toString w)
-     (str/replace "\r\n" "\n")
-     (str/replace "\r" "\n")
-     (str/replace #"\n+" "\n"))))
+           [org.pegdown PegDownProcessor Extensions]))
 
 
 (def options
@@ -77,15 +61,15 @@ a String, or a list of child nodes."
 
 (letfn [(lift [n]
           (let [n-class (class n)]
-            (cond (#{SuperNode RootNode} (class n))
+            (cond (#{SuperNode RootNode} n-class)
                   (mapcat lift (.getChildren ^SuperNode n))
 
-                  (#{TextNode SpecialTextNode} (class n))
+                  (#{TextNode SpecialTextNode} n-class)
                   (list (.getText ^TextNode n))
 
                   :else (list n))))]
   (defn lift-children [n]
-    (combine-adjacent string? str
+    (node/combine-adjacent string? str
       (mapcat lift (.getChildren n)))))
 
 (defn f-apply [f]
@@ -103,7 +87,7 @@ a String, or a list of child nodes."
 
 (extend-protocol MarkdownNode RootNode
   (->node [^RootNode root cons-node state]
-    (let [refs (index-by :id
+    (let [refs (node/index-by :id
                  (map (curry->node just-attributes state)
                       (.getReferences root)))
           abbrs (not-empty (map (curry->node cons-node state)
